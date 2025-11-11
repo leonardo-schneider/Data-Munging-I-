@@ -41,6 +41,8 @@ This limitation highlighted how critical data completeness and accuracy are when
 | `BaseR_Presentation.Rmd` | Main R Markdown document with the full analysis |
 | `Will_Python_to_BaseR_Presentation.Rmd` | Collaborative version — translating Python logic into Base R |
 | `BaseR_Presentation.html` | Rendered version of the presentation (output) |
+| `BaseR_Presentation.pdf` | PDF version of the final presentation (static, ideal for sharing or printing) |
+
 
 ---
 
