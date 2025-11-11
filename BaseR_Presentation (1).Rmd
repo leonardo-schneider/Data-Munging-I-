@@ -1,0 +1,825 @@
+---
+title: "Institutional & Field-of-Study Analytics"
+author: "Will, Leo, James"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+
+---
+
+## Goals
+
+- Translate Python to base R, no tidyverse or dplyr.
+- Same analysis intent (cleaning, profiling, mapping, ROI, regions, locale, FoS).
+- Side-by-side explanations.
+
+## Conventions Used
+
+- Use `read.csv()` / `read.delim()` to import.
+- Named vectors for code maps.
+- `as.numeric()`, `is.na()`, `complete.cases()` for cleaning.
+- `aggregate()`, `tapply()`, `by()` for grouped summaries.
+- Base graphics: `plot()`, `points()`, `barplot()`, `boxplot()`, `legend()`.
+
+## Example: Import
+
+
+
+## 1) Institutional Columns to Load
+
+```{r setup-paths-and-columns}
+data_dir <- "College_Scorecard_Raw_Data_05192025"
+
+columns_to_load_institution <- c(
+  "UNITID","INSTNM","CONTROL","PREDDEG","HIGHDEG",
+  "REGION","LOCALE","UGDS",
+  "COSTT4_A","COSTT4_P",
+  "TUITIONFEE_IN","TUITIONFEE_OUT","TUITIONFEE_PROG",
+  "MD_EARN_WNE_P10",
+  "NPT4_PUB","NPT4_PRIV","NPT4_PROG",
+  "C150_4","C150_L4","C150_4_POOLED","C200_L4","C200_4"
+)
+print(data_dir)
+```
+
+**Import (base R):**
+
+```{r}
+df <- read.csv("C:/Users/leona/Desktop/Masters/Data Mungin/FirstGroupProject/College_Scorecard_Raw_Data_05192025/Most-Recent-Cohorts-Institution.csv", stringsAsFactors = FALSE)# Keep only columns that exist
+df <- df[ , intersect(columns_to_load_institution, names(df))]
+
+cat("Original shape:", nrow(df), "rows x", ncol(df), "cols\n")
+head(df, 3)
+```
+
+------------------------------------------------------------------------
+
+## 2) ROI Columns to Numeric & Missing Profile
+
+```{r}
+roi_cols <- c("COSTT4_A","MD_EARN_WNE_P10")
+for (col in roi_cols) {
+  # Coerce; non-numeric like 'PS' becomes NA
+  df[[col]] <- suppressWarnings(as.numeric(df[[col]]))
+}
+
+cat("Missing values in ROI columns:\n")
+print(colSums(is.na(df[roi_cols])))
+```
+
+
+
+------------------------------------------------------------------------
+
+## 3) Profile Non-reporting (Missing COSTT4_A)
+
+```{r}
+df_missing_cost <- df[ is.na(df$COSTT4_A), ]
+
+# CONTROL map (1/2/3)
+control_map <- c("1"="Public","2"="Private Nonprofit","3"="Private For-Profit")
+df_missing_cost$CONTROL_NAME <- control_map[ as.character(df_missing_cost$CONTROL) ]
+
+cat(nrow(df_missing_cost), "institutions missing COSTT4_A\n")
+ctrl_tb <- table(df_missing_cost$CONTROL_NAME)
+ctrl_pct <- round(100 * prop.table(ctrl_tb), 2)
+print(ctrl_tb); print(ctrl_pct)
+
+# PREDDEG map
+preddeg_map <- c(
+  "0"="Not Classified",
+  "1"="Predominantly Certificate",
+  "2"="Predominantly Associate's",
+  "3"="Predominantly Bachelor's",
+  "4"="Exclusively Graduate"
+)
+df_missing_cost$PREDDEG_NAME <- preddeg_map[ as.character(df_missing_cost$PREDDEG) ]
+table(df_missing_cost$PREDDEG_NAME)
+```
+
+Of the 3,182 institutions that are missing cost data, nearly two-thirds (65%) are Private For-Profit. 
+
+These are mostly certificate-granting institutions, not traditional 4-year colleges.
+
+------------------------------------------------------------------------
+
+## 4) Cleaned Dataset (Drop NA in ROI)
+
+```{r}
+df_cleaned <- df[ complete.cases(df[roi_cols]), ]
+cat("After drop-NA (ROI):", nrow(df_cleaned), "rows\n")
+summary(df_cleaned[roi_cols])
+```
+After removing all rows with missing cost or earnings data, the final dataset is 3,075 institutions.
+
+------------------------------------------------------------------------
+
+## 5) Field-of-Study Import & Cleaning
+
+```{r}
+# Path placeholders; update as needed if available
+# fos_path <- file.path("C:/Users/leona/Desktop/Masters/Data Mungin/FirstGroupProject/College_Scorecard_Raw_Data_05192025/Most-Recent-Cohorts-Field-of-Study.csv")
+
+df_field <- read.csv("C:/Users/leona/Desktop/Masters/Data Mungin/FirstGroupProject/College_Scorecard_Raw_Data_05192025/Most-Recent-Cohorts-Field-of-Study.csv", stringsAsFactors = FALSE)
+  
+  # Keep relevant columns if present
+  columns_to_load_field <- c(
+    "EARN_GT_THRESHOLD_1YR","EARN_GT_THRESHOLD_5YR",
+    "UNITID","CIPCODE","CREDLEV","CONTROL",
+    "EARN_MDN_1YR","EARN_MDN_4YR"
+  )
+  df_field <- df_field[ , intersect(columns_to_load_field, names(df_field)) ]
+  
+  # Coerce and cap > 100 to NA
+  make_num <- function(x) suppressWarnings(as.numeric(x))
+  if ("EARN_GT_THRESHOLD_1YR" %in% names(df_field)) {
+    df_field$EARN_GT_THRESHOLD_1YR <- make_num(df_field$EARN_GT_THRESHOLD_1YR)
+    df_field$EARN_GT_THRESHOLD_1YR[df_field$EARN_GT_THRESHOLD_1YR > 100] <- NA
+  }
+  if ("EARN_GT_THRESHOLD_5YR" %in% names(df_field)) {
+    df_field$EARN_GT_THRESHOLD_5YR <- make_num(df_field$EARN_GT_THRESHOLD_5YR)
+    df_field$EARN_GT_THRESHOLD_5YR[df_field$EARN_GT_THRESHOLD_5YR > 100] <- NA
+  }
+  
+  summary(df_field)
+
+```
+
+
+------------------------------------------------------------------------
+
+## 6) Predominant Degree Share (Counts & Percent)
+
+```{r}
+df_cleaned$PREDDEG_NAME <- preddeg_map[ as.character(df_cleaned$PREDDEG) ]
+roi_counts <- table(df_cleaned$PREDDEG_NAME)
+roi_percent <- round(100 * prop.table(roi_counts), 2)
+with_roi <- data.frame(Count = as.vector(roi_counts),
+                       Percentage = as.vector(roi_percent),
+                       row.names = names(roi_counts))
+print(with_roi)
+```
+
+------------------------------------------------------------------------
+
+## 7) Non-Traditional Institutions: Program Cost vs Earnings
+
+```{r}
+# Targets: Not Classified, Certificate, Associate's => codes 0,1,2
+target_preddegs <- c(0,1,2)
+# Ensure PREDDEG is numeric
+df$PREDDEG <- suppressWarnings(as.numeric(df$PREDDEG))
+
+df_missing_academic_cost <- df[ is.na(df$COSTT4_A), ]
+df_target <- df_missing_academic_cost[ df_missing_academic_cost$PREDDEG %in% target_preddegs, ]
+
+# Keep rows with both program cost & earnings
+keep <- !is.na(df_target$COSTT4_P) & !is.na(df_target$MD_EARN_WNE_P10)
+df_plot_ready <- df_target[ keep, ]
+
+df_plot_ready$PREDDEG_NAME <- preddeg_map[ as.character(df_plot_ready$PREDDEG) ]
+
+par(mar = c(2, 4.1, 2, 2))
+# Base R scatter, color by PREDDEG_NAME
+cols <- c("Not Classified"="black","Predominantly Certificate"="steelblue","Predominantly Associate's"="red")
+plot(df_plot_ready$COSTT4_P, df_plot_ready$MD_EARN_WNE_P10,
+     xlab="Average Annual Program Cost ($)", ylab="Median Earnings 10Y After Entry ($)",
+     main="Program Cost vs Earnings (Non-Traditional Institutions)",
+     col = cols[df_plot_ready$PREDDEG_NAME], pch=16, cex=0.7);
+legend("topleft", legend=names(cols), col=cols, pch=16, bty="n")
+```
+
+------------------------------------------------------------------------
+
+## 8) Institution Type & Scatter (Correct CONTROL Mapping)
+
+```{r}
+df_cleaned$CONTROL_NAME <- control_map[ as.character(df_cleaned$CONTROL) ]
+inst_counts <- table(df_cleaned$CONTROL_NAME)
+inst_pct <- round(100 * prop.table(inst_counts), 2)
+data.frame(Count=as.vector(inst_counts), Percentage=as.vector(inst_pct),
+           row.names = names(inst_counts))
+
+# Cost vs Earnings colored by institution type
+cols2 <- c("Public"="forestgreen","Private Nonprofit"="goldenrod","Private For-Profit"="firebrick")
+plot(df_cleaned$COSTT4_A, df_cleaned$MD_EARN_WNE_P10,
+     xlab="Cost of Attendance ($)", ylab="Median Earnings 10Y ($)",
+     main="Cost vs Earnings by Institution Type",
+     col=cols2[df_cleaned$CONTROL_NAME], pch=16, cex=0.6); 
+legend("topleft", legend=names(cols2), col=cols2, pch=16, bty="n")
+```
+
+------------------------------------------------------------------------
+
+## 9) Net Price, ROI, and Top-10
+
+```{r}
+# If public net price missing, use private net price
+df$NPT4_PUB <- suppressWarnings(as.numeric(df$NPT4_PUB))
+df$NPT4_PRIV <- suppressWarnings(as.numeric(df$NPT4_PRIV))
+
+df$NET_PRICE <- ifelse(!is.na(df$NPT4_PUB), df$NPT4_PUB, df$NPT4_PRIV)
+df_np <- df[ !is.na(df$NET_PRICE) & !is.na(df$MD_EARN_WNE_P10), ]
+cat("Found", nrow(df_np), "institutions with Net Price & Earnings\n")
+
+df_np$SCHOOL_TYPE <- control_map[ as.character(df_np$CONTROL) ]
+df_np$ROI_RATIO <- df_np$MD_EARN_WNE_P10 / df_np$NET_PRICE
+
+# Top-10 overall for earnings > 80k, highest ROI
+top_overall <- df_np[ df_np$MD_EARN_WNE_P10 > 80000, c("INSTNM","ROI_RATIO","MD_EARN_WNE_P10","COSTT4_A","NET_PRICE") ]
+top_overall <- top_overall[ order(-top_overall$ROI_RATIO), ]
+head(top_overall, 10)
+```
+
+```{r}
+df_np$school_type_name <- ifelse(df_np$CONTROL == 1, "Public",
+                                 ifelse(df_np$CONTROL == 2, "Private Nonprofit",
+                                        "Private For-Profit"))
+df_np$plot_color <- ifelse(df_np$school_type_name == "Public", "forestgreen",
+                           ifelse(df_np$school_type_name == "Private Nonprofit", "goldenrod",
+                                  "firebrick"))
+plot(
+  x = df_np$NET_PRICE,
+  y = df_np$MD_EARN_WNE_P10,
+  main = "Net Price vs. Earnings by School Type",
+  xlab = "Net Price ($)",
+  ylab = "Median Earnings 10 Years Later ($)",
+
+  col = df_np$plot_color,
+  pch = 16
+)
+
+
+grid()
+
+legend(
+  "topleft",
+  legend = c("Public", "Private Nonprofit", "Private For-Profit"),
+  col = c("forestgreen", "goldenrod", "firebrick"),
+  pch = 16
+)
+```
+
+------------------------------------------------------------------------
+
+## 10) Top-10 by Institution Type
+
+```{r}
+top_by_type <- function(ctrl_code) {
+  tmp <- df_np[ df_np$CONTROL == ctrl_code & df_np$MD_EARN_WNE_P10 > 80000, 
+                c("INSTNM","ROI_RATIO","MD_EARN_WNE_P10","COSTT4_A","NET_PRICE") ]
+  tmp <- tmp[ order(-tmp$ROI_RATIO), ]
+  head(tmp, 10)
+}
+top_public  <- top_by_type(1)
+top_priv_np <- top_by_type(2)
+top_priv_fp <- top_by_type(3)
+
+top_public; top_priv_np; top_priv_fp
+```
+
+------------------------------------------------------------------------
+
+## 11) Regions
+
+```{r}
+region_map <- c(
+  "0"="U.S. Service Schools","1"="New England","2"="Mid East","3"="Great Lakes",
+  "4"="Plains","5"="Southeast","6"="Southwest","7"="Rocky Mountains","8"="Far West","9"="Outlying Areas"
+)
+df_cleaned$NET_PRICE <- ifelse(!is.na(df_cleaned$NPT4_PUB), df_cleaned$NPT4_PUB, df_cleaned$NPT4_PRIV)
+df_cleaned$REGION_NAME <- region_map[ as.character(df_cleaned$REGION) ]
+table(df_cleaned$REGION_NAME)
+```
+
+```{r}
+# Region means and diff
+region_means <- aggregate(cbind(MD_EARN_WNE_P10, NET_PRICE) ~ REGION_NAME, df_cleaned, mean, na.rm=TRUE)
+region_means$DIFF_ABS <- region_means$MD_EARN_WNE_P10 - region_means$NET_PRICE
+region_means[ order(-region_means$DIFF_ABS), ]
+```
+
+------------------------------------------------------------------------
+
+## 12) Region-Level Normalization & Trend
+
+```{r}
+# Normalize within region: (x - min) / (max - min)
+norm_in_group <- function(x) (x - min(x, na.rm=TRUE)) / (max(x, na.rm=TRUE) - min(x, na.rm=TRUE))
+
+df_cleaned$earn_norm <- ave(df_cleaned$MD_EARN_WNE_P10, df_cleaned$REGION_NAME, FUN=norm_in_group)
+df_cleaned$net_norm  <- ave(df_cleaned$NET_PRICE,        df_cleaned$REGION_NAME, FUN=norm_in_group)
+df_cleaned$net_diff_ratio <- df_cleaned$earn_norm - df_cleaned$net_norm
+
+region_trends <- aggregate(net_diff_ratio ~ REGION_NAME, df_cleaned, mean, na.rm=TRUE)
+region_trends <- region_trends[ order(-region_trends$net_diff_ratio), ]
+region_trends
+```
+
+```{r}
+# Barplot
+barplot(height = region_trends$net_diff_ratio, names.arg = region_trends$REGION_NAME,
+        las=2, main="Relative Earnings - Cost Ratio by Region",
+        ylab="Normalized (Earnings - Cost)", border=NA)
+grid(nx=NA, ny=NULL)
+```
+
+------------------------------------------------------------------------
+
+## 13) Locale Simplification & Plots
+
+```{r}
+simplify_locale <- function(locale_code) {
+  if (is.na(locale_code)) return("Unknown")
+  if (locale_code >= 11 && locale_code <= 13) return("City")
+  if (locale_code >= 21 && locale_code <= 23) return("Suburb")
+  if (locale_code >= 31 && locale_code <= 33) return("Town")
+  if (locale_code >= 41 && locale_code <= 43) return("Rural")
+  "Unknown"
+}
+
+df_cleaned$LOCALE_TYPE <- sapply(df_cleaned$LOCALE, simplify_locale)
+table(df_cleaned$LOCALE_TYPE)
+```
+
+```{r}
+
+# Locale summary means
+loc_means <- aggregate(cbind(NET_PRICE, MD_EARN_WNE_P10) ~ LOCALE_TYPE, df_cleaned, mean, na.rm=TRUE)
+loc_means$DIFF <- loc_means$MD_EARN_WNE_P10 - loc_means$NET_PRICE
+loc_means
+```
+
+```{r}
+# Scatter by locale
+loc_cols <- c("City"="dodgerblue3","Suburb"="darkorange2","Town"="purple","Rural"="darkgreen","Unknown"="gray60")
+plot(df_cleaned$NET_PRICE, df_cleaned$MD_EARN_WNE_P10,
+     xlab="Net Price ($)", ylab="Median Earnings 10Y ($)",
+     main="Cost vs Earnings by Institutional Locale",
+     col=loc_cols[df_cleaned$LOCALE_TYPE], pch=16, cex=0.6)
+grid(); legend("topleft", legend=names(loc_cols), col=loc_cols, pch=16, bty="n")
+```
+
+------------------------------------------------------------------------
+
+## 14) UGDS Quartiles & Size Plot
+
+```{r}
+summary(df_cleaned$UGDS)
+
+# Use exact cut points as in Python example
+breaks <- c(0, 716, 1725, 4574, Inf)
+labels <- c("Q1 (6-715)","Q2 (716-1725)","Q3 (1725-4574)","Q4 (>4574)")
+df_cleaned$SCHOOL_SIZE <- cut(df_cleaned$UGDS, breaks=breaks, labels=labels, right=FALSE)
+
+sz_cols <- setNames(rainbow(length(labels)), labels)
+```
+```{r}
+plot(df_cleaned$NET_PRICE, df_cleaned$MD_EARN_WNE_P10,
+     xlab="Net Price ($)", ylab="Median Earnings 10Y ($)",
+     main="Cost vs Earnings by UG Population",
+     col=sz_cols[df_cleaned$SCHOOL_SIZE], pch=16, cex=0.6)
+grid(); legend("topleft", legend=labels, col=sz_cols, pch=16, bty="n")
+```
+
+------------------------------------------------------------------------
+
+## 15) ROI by Institution Type (Boxplot) & Medians
+
+```{r}
+# Ensure ROI present (df_np has NET_PRICE & MD_EARN_WNE_P10)
+# Reuse df_np from earlier
+if (!exists("df_np")) {
+  df$NPT4_PUB <- suppressWarnings(as.numeric(df$NPT4_PUB))
+  df$NPT4_PRIV <- suppressWarnings(as.numeric(df$NPT4_PRIV))
+  df$NET_PRICE <- ifelse(!is.na(df$NPT4_PUB), df$NPT4_PUB, df$NPT4_PRIV)
+  df_np <- df[ !is.na(df$NET_PRICE) & !is.na(df$MD_EARN_WNE_P10), ]
+  df_np$SCHOOL_TYPE <- control_map[ as.character(df_np$CONTROL) ]
+  df_np$ROI_RATIO <- df_np$MD_EARN_WNE_P10 / df_np$NET_PRICE
+}
+
+boxplot(ROI_RATIO ~ SCHOOL_TYPE, data=df_np,
+        main="Return on Investment (ROI) by Institution Type",
+        ylab="ROI Ratio", xlab="Institution Type",
+        outline=FALSE)
+abline(h=1, lty=2)
+```
+```{r}
+tapply(df_np$ROI_RATIO, df_np$SCHOOL_TYPE, median, na.rm=TRUE)
+```
+
+------------------------------------------------------------------------
+
+## 17) Completion Rate Cleaning & Overview
+
+```{r}
+df_with_cost <- df[!is.na(df$COSTT4_A), ]
+
+completion_rates <- suppressWarnings(as.numeric(df_with_cost$C150_4_POOLED))
+
+compl_clean <- completion_rates[!is.na(completion_rates)]
+
+cat("Total institutions with cost data:", nrow(df_with_cost), "\n\n")
+cat("Of those, institutions with valid completion data:", length(compl_clean), "\n\n")
+cat("Missing rate within this subset (%):", round(100 * (1 - length(compl_clean) / nrow(df_with_cost)), 2), "\n\n")
+
+summary(compl_clean)
+```
+
+------------------------------------------------------------------------
+
+## 19) Completion & Earnings by Institution Type
+
+```{r}
+needed <- c("CONTROL","C150_4_POOLED","MD_EARN_WNE_P10")
+if (all(needed %in% names(df))) {
+  
+  # Aggregate directly from the original 'df' data frame
+  summary_by_type <- aggregate(
+    cbind(C150_4_POOLED, MD_EARN_WNE_P10) ~ CONTROL, 
+    data = df, 
+    FUN = mean, 
+    na.action = na.omit
+  )
+  
+  # 2. Map the control codes to names for labeling.
+  c(1, 2, 3)
+  as.character( c(1, 2, 3) ) 
+  c("Public", "Private Nonprofit", "Private For-Profit")
+  summary_by_type$CONTROL_NAME <- c("Public", "Private Nonprofit", "Private For-Profit")
+  
+  print(summary_by_type)
+
+  # Visualization
+  plot_matrix <- t(as.matrix(
+    data.frame(
+      Completion = summary_by_type$C150_4_POOLED,
+      Earnings_scaled = summary_by_type$MD_EARN_WNE_P10 / 100000
+    )
+  ))
+  barplot(
+    plot_matrix,
+    beside = TRUE, 
+    names.arg = summary_by_type$CONTROL_NAME,
+    legend.text = c("Completion Rate", "Earnings (/100k)"),
+    args.legend = list(x = "topleft", bty = "n"),
+    col = c("skyblue", "orange"),
+    main = "Avg Completion and Earnings by Institution Type",
+    ylab = "Value (Rate or $/100k)"
+  )
+  grid(nx = NA, ny = NULL)
+}
+```
+
+------------------------------------------------------------------------
+
+## 20) Size vs Performance
+
+```{r}
+need2 <- c("UGDS","C150_4_POOLED","MD_EARN_WNE_P10")
+if (all(need2 %in% names(df))) {
+  size_df <- data.frame(
+    UGDS=suppressWarnings(as.numeric(df$UGDS)),
+    C150_4_POOLED=suppressWarnings(as.numeric(df$C150_4_POOLED)),
+    MD_EARN_WNE_P10=suppressWarnings(as.numeric(df$MD_EARN_WNE_P10))
+  )
+  size_df <- size_df[ complete.cases(size_df), ]
+  corr_size_completion <- cor(size_df$UGDS, size_df$C150_4_POOLED)
+  corr_size_earnings <- cor(size_df$UGDS, size_df$MD_EARN_WNE_P10)
+  cat(sprintf("Corr(UGDS, Completion): %.3f\n", corr_size_completion))
+  cat(sprintf("Corr(UGDS, Earnings): %.3f\n", corr_size_earnings))
+}
+```
+```{r}  
+  par(mfrow=c(1,2))
+  plot(size_df$UGDS, size_df$C150_4_POOLED, pch=16, col=rgb(0,0,0,0.4),
+       xlab="UGDS", ylab="Completion Rate", main="Size vs Completion"); grid()
+  plot(size_df$UGDS, size_df$MD_EARN_WNE_P10, pch=16, col=rgb(0,0,0,0.4),
+       xlab="UGDS", ylab="Median Earnings 10Y ($)", main="Size vs Earnings"); grid()
+  par(mfrow=c(1,1))
+
+```
+
+------------------------------------------------------------------------
+
+## 21) Region Summary (Bars) & Success Index
+
+```{r}
+if (all(c("REGION","C150_4_POOLED","MD_EARN_WNE_P10") %in% names(df))) {
+  region_df <- data.frame(
+    REGION = suppressWarnings(as.numeric(df$REGION)),
+    C150_4_POOLED = suppressWarnings(as.numeric(df$C150_4_POOLED)),
+    MD_EARN_WNE_P10 = suppressWarnings(as.numeric(df$MD_EARN_WNE_P10))
+  )
+  region_df <- region_df[ complete.cases(region_df), ]
+  region_df$REGION_NAME <- region_map[ as.character(region_df$REGION) ]
+  
+  summary_by_region <- aggregate(cbind(C150_4_POOLED, MD_EARN_WNE_P10) ~ REGION_NAME, region_df, mean)
+  summary_by_region <- summary_by_region[ order(-summary_by_region$MD_EARN_WNE_P10), ]
+  summary_by_region
+  
+  # Bars (earnings scaled)
+  par(mar=c(10,4,3,1))
+  mat <- t(as.matrix(cbind(summary_by_region$C150_4_POOLED, summary_by_region$MD_EARN_WNE_P10/100000)))
+  barplot(mat, beside=TRUE, names.arg=summary_by_region$REGION_NAME, las=2,
+          col=c("skyblue","orange"), legend.text=c("Completion","Earnings (/100k)"),
+          main="Avg Completion and Earnings by Region")
+  grid(nx=NA, ny=NULL)
+  
+  # Success Index (normalize columns 0–1 and average)
+  rng_norm <- function(v) (v - min(v, na.rm=TRUE)) / (max(v, na.rm=TRUE) - min(v, na.rm=TRUE))
+  summary_by_region$completion_norm <- rng_norm(summary_by_region$C150_4_POOLED)
+  summary_by_region$earnings_norm   <- rng_norm(summary_by_region$MD_EARN_WNE_P10)
+  summary_by_region$success_index   <- (summary_by_region$completion_norm + summary_by_region$earnings_norm)/2
+  summary_by_region <- summary_by_region[ order(-summary_by_region$success_index), ]
+}
+```
+
+------------------------------------------------------------------------
+
+## 16) Field-of-Study (CIP) Area Summaries
+
+```{r}
+
+degree_column_name <- "CREDLEV_NAME"
+
+# Replace privacy strings with NA
+repl <- function(x) {
+  x[x %in% c("PS", "PrivacySuppressed", "NULL", "None", "")] <- NA
+  x
+}
+for (nm in names(df_field)) {
+  df_field[[nm]] <- repl(df_field[[nm]])
+}
+
+# convert key columns to numeric
+num_cols <- intersect(c(
+  "EARN_MDN_1YR", 
+  "EARN_MDN_4YR", 
+  "EARN_GT_THRESHOLD_1YR", 
+  "EARN_GT_THRESHOLD_5YR",
+  "DEBT_MDN_SUPP", 
+  "NET_PRICE"
+), names(df_field))
+for (cname in num_cols) {
+  df_field[[cname]] <- suppressWarnings(as.numeric(df_field[[cname]]))
+}
+
+# map detailed cip codes to broader subject areas
+if ("CIPCODE" %in% names(df_field)) {
+  df_field$CIP2 <- suppressWarnings(as.integer(as.numeric(df_field$CIPCODE) %/% 100))
+  cip2_map <- c(
+    "1" = "Agriculture & Related Sciences", 
+    "3" = "Natural Resources & Conservation",
+    "4" = "Architecture & Related Services", 
+    "9" = "Communications & Journalism",
+    "10" = "Communications Technologies", 
+    "11" = "Computer & Information Sciences",
+    "13" = "Education", 
+    "14" = "Engineering", 
+    "15" = "Engineering Technologies",
+    "19" = "Family & Consumer Sciences", 
+    "22" = "Legal Studies",
+    "24" = "Liberal Arts & Humanities", 
+    "27" = "Mathematics & Statistics",
+    "30" = "Multi/Interdisciplinary Studies", 
+    "38" = "Philosophy & Religious Studies",
+    "40" = "Physical Sciences", 
+    "42" = "Psychology", 
+    "44" = "Public Administration & Social Services",
+    "45" = "Social Sciences", 
+    "50" = "Visual & Performing Arts",
+    "51" = "Health Professions & Related Programs",
+    "52" = "Business, Management, & Marketing", 
+    "12" = "Personal & Culinary Services",
+    "23" = "English Language & Literature", 
+    "31" = "Parks/Rec/Leisure & Kinesiology",
+    "39" = "Theology & Religious Vocations", 
+    "46" = "Construction Trades",
+    "48" = "Precision Production", 
+    "54" = "History"
+  )
+  df_field$CIPAREA <- cip2_map[as.character(df_field$CIP2)]
+}
+
+# map numeric credential levels to text names
+credlev_map <- c(
+  "2" = "Associate's",
+  "3" = "Bachelor's",
+  "5" = "Master's",
+  "6" = "Doctoral",
+  "7" = "First Professional",
+  "1" = "Certificate"
+)
+df_field$CREDLEV_NAME <- credlev_map[as.character(df_field$CREDLEV)]
+
+# filter for only the assc., bach, mast. degree levels
+desired_degrees <- c("Associate's", "Bachelor's", "Master's")
+df_filtered <- df_field[df_field[[degree_column_name]] %in% desired_degrees, ]
+
+# calculate median earnings by area and degree
+summary_cip_degree <- aggregate(df_filtered["EARN_MDN_1YR"],
+  by = list(
+    CIPAREA = df_filtered$CIPAREA,
+    Degree = df_filtered[[degree_column_name]]
+  ),
+  FUN = median,
+  na.rm = TRUE
+)
+
+# reshape data from long to wide format
+earnings_by_degree <- reshape(summary_cip_degree,
+  idvar = "CIPAREA",
+  timevar = "Degree",
+  direction = "wide"
+)
+
+# sort by bachelor's degree earnings and display
+earnings_by_degree_sorted <- earnings_by_degree[order(earnings_by_degree$`EARN_MDN_1YR.Bachelor's`, decreasing = TRUE), ]
+earnings_by_degree_sorted
+```
+```{r}
+# Master's earnings multiplier
+earnings_by_degree_sorted$Masters_Multiplier <- earnings_by_degree_sorted$`EARN_MDN_1YR.Master's` / earnings_by_degree_sorted$`EARN_MDN_1YR.Bachelor's`
+
+# raw earnings gain
+earnings_by_degree_sorted$Masters_Raw_Gain <- earnings_by_degree_sorted$`EARN_MDN_1YR.Master's` - earnings_by_degree_sorted$`EARN_MDN_1YR.Bachelor's`
+
+# Filter where multiplier or raw gain not calcualted
+combined_data <- earnings_by_degree_sorted[
+  !is.na(earnings_by_degree_sorted$Masters_Multiplier) & 
+  is.finite(earnings_by_degree_sorted$Masters_Multiplier) &
+  !is.na(earnings_by_degree_sorted$Masters_Raw_Gain), 
+]
+
+# descending order
+combined_sorted <- combined_data[order(combined_data$Masters_Multiplier, decreasing = TRUE), ]
+
+
+final_table <- data.frame(
+  Discipline = combined_sorted$CIPAREA,
+  Masters_Earnings_Multiplier = combined_sorted$Masters_Multiplier,
+  Masters_Earnings_Gain = combined_sorted$Masters_Raw_Gain, # corrected column name
+  Bachelors_Median_Earnings = combined_sorted$`EARN_MDN_1YR.Bachelor's`,
+  Masters_Median_Earnings = combined_sorted$`EARN_MDN_1YR.Master's`
+)
+
+print(final_table)
+```
+
+------------------------------------------------------------------------
+
+## 22) Do Higher Degrees Lead to Higher Pay? ---
+
+
+```{r top-visualize-1yrearnings-with-control}
+
+
+df_field$CREDLEV_NAME <- credlev_map[as.character(df_field$CREDLEV)]
+
+# filter for only the degrees we want to compare
+df_cred_compare <- df_field[df_field$CREDLEV %in% c(2, 3, 5), ]
+
+# calculate mean earnings by discipline and overall median earnings
+earnings_by_cred <- aggregate(EARN_MDN_1YR ~ CIPAREA + CREDLEV_NAME, data = df_cred_compare, FUN = mean, na.rm = TRUE)
+
+median_earnings_all <- aggregate(EARN_MDN_1YR ~ CREDLEV_NAME, data = df_cred_compare, FUN = median, na.rm = TRUE)
+
+# create a baseline 'all disciplines' vector for comparison
+control_data <- c(
+  "Associate's" = median_earnings_all$EARN_MDN_1YR[median_earnings_all$CREDLEV_NAME == "Associate's"],
+  "Bachelor's"  = median_earnings_all$EARN_MDN_1YR[median_earnings_all$CREDLEV_NAME == "Bachelor's"],
+  "Master's"    = median_earnings_all$EARN_MDN_1YR[median_earnings_all$CREDLEV_NAME == "Master's"]
+)
+
+# data sci as comp + stats
+datasci_cip <- c("Computer & Information Sciences", "Mathematics & Statistics")
+plot_data_long <- earnings_by_cred[earnings_by_cred$CIPAREA %in% datasci_cip, ]
+
+# manually separate, sort, and reshape data into a matrix for plotting
+assoc_data <- plot_data_long[plot_data_long$CREDLEV_NAME == "Associate's", ]
+bach_data  <- plot_data_long[plot_data_long$CREDLEV_NAME == "Bachelor's", ]
+mast_data  <- plot_data_long[plot_data_long$CREDLEV_NAME == "Master's", ]
+
+assoc_data <- assoc_data[order(assoc_data$CIPAREA), ]
+bach_data  <- bach_data[order(bach_data$CIPAREA), ]
+mast_data  <- mast_data[order(mast_data$CIPAREA), ]
+
+plot_matrix <- cbind(
+  "Associate's" = assoc_data$EARN_MDN_1YR,
+  "Bachelor's"  = bach_data$EARN_MDN_1YR,
+  "Master's"    = mast_data$EARN_MDN_1YR
+)
+rownames(plot_matrix) <- assoc_data$CIPAREA
+
+# add the 'all disciplines' baseline row to the plot matrix
+plot_matrix_with_control <- rbind("All Disciplines" = control_data, plot_matrix)
+
+
+# disable scientific notation
+options(scipen = 999)
+
+par(mar = c(5, 10, 4, 6))
+max_val <- max(plot_matrix_with_control, na.rm = TRUE) * 1.1
+
+# grouped horizontal barplot
+barplot(
+  height = t(plot_matrix_with_control),
+  beside = TRUE,
+  horiz = TRUE,
+  main = "Where Does Data Science Fit In?",
+  xlab = "Median Earnings 1 Year Post-Completion (2018-2021)",
+  las = 1,
+  cex.names = 0.7,
+  col = c("skyblue", "steelblue", "darkblue"),
+  xlim = c(0, max_val)
+)
+
+# uncrop the plot
+par(xpd=TRUE)
+
+
+legend(
+  "topright", 
+  inset = c(-0.2, 0),
+  legend = c("Associate's", "Bachelor's", "Master's"),
+  fill = c("skyblue", "steelblue", "darkblue"),
+  title = "Degree Level",
+  bty = "n",
+  cex = 0.8
+)
+```
+
+```{r top-visualize-4yrearnings-with-control}
+
+# same as prev code change EARN_MDN_4YR to EARN_MDN_1YR
+earnings_by_cred <- aggregate(EARN_MDN_4YR ~ CIPAREA + CREDLEV_NAME, data = df_cred_compare, FUN = mean, na.rm = TRUE)
+median_earnings_all <- aggregate(EARN_MDN_4YR ~ CREDLEV_NAME, data = df_cred_compare, FUN = median, na.rm = TRUE)
+control_data <- c(
+  "Associate's" = median_earnings_all$EARN_MDN_4YR[median_earnings_all$CREDLEV_NAME == "Associate's"],
+  "Bachelor's"  = median_earnings_all$EARN_MDN_4YR[median_earnings_all$CREDLEV_NAME == "Bachelor's"],
+  "Master's"    = median_earnings_all$EARN_MDN_4YR[median_earnings_all$CREDLEV_NAME == "Master's"]
+)
+
+# select data science-related disciplines to plot
+datasci_cip <- c("Computer & Information Sciences", "Mathematics & Statistics")
+plot_data_long <- earnings_by_cred[earnings_by_cred$CIPAREA %in% datasci_cip, ]
+
+# manually separate, sort, and reshape data into a matrix for plotting
+assoc_data <- plot_data_long[plot_data_long$CREDLEV_NAME == "Associate's", ]
+bach_data  <- plot_data_long[plot_data_long$CREDLEV_NAME == "Bachelor's", ]
+mast_data  <- plot_data_long[plot_data_long$CREDLEV_NAME == "Master's", ]
+
+assoc_data <- assoc_data[order(assoc_data$CIPAREA), ]
+bach_data  <- bach_data[order(bach_data$CIPAREA), ]
+mast_data  <- mast_data[order(mast_data$CIPAREA), ]
+
+plot_matrix <- cbind(
+  "Associate's" = assoc_data$EARN_MDN_4YR,
+  "Bachelor's"  = bach_data$EARN_MDN_4YR,
+  "Master's"    = mast_data$EARN_MDN_4YR
+)
+rownames(plot_matrix) <- assoc_data$CIPAREA
+
+
+plot_matrix_with_control <- rbind("All Disciplines" = control_data, plot_matrix)
+
+
+# sisable scientific notation
+options(scipen = 999)
+
+par(mar = c(5, 10, 4, 6))
+
+max_val <- max(plot_matrix_with_control, na.rm = TRUE) * 1.15
+
+barplot(
+  height = t(plot_matrix_with_control),
+  beside = TRUE,
+  horiz = TRUE,
+  main = "Where Does Data Science Fit In? (2)",
+  xlab = "Median Earnings 4 Year Post-Completion (2018-2021)",
+  las = 1,
+  cex.names = 0.7,
+  col = c("skyblue", "steelblue", "darkblue"),
+  xlim = c(0, max_val)
+)
+
+# uncrop the plot
+par(xpd=TRUE)
+
+legend(
+  "topright", 
+  inset = c(-0.2, 0),
+  legend = c("Associate's", "Bachelor's", "Master's"),
+  fill = c("skyblue", "steelblue", "darkblue"),
+  title = "Degree Level",
+  bty = "n",
+  cex = 0.8
+)
+```
+
+
+
